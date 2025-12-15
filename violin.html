@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Violin Sight-Reading Trainer — Improved Pitch Detection</title>
+<style>
+  :root{
+    --bg:#071022; --card:#091423; --accent:#7dd3fc; --accent-2:#a78bfa;
+    --good:#34d399; --bad:#fb7185; --muted:#9ca3af;
+  }
+  body{margin:0;background:linear-gradient(180deg,#041027,#071a2a);font-family:Inter,system-ui,Segoe UI,Roboto,Arial;color:#e6eef8;display:flex;align-items:center;justify-content:center;height:100vh;padding:20px}
+  .app{width:980px;max-width:96vw;border-radius:14px;padding:18px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));display:grid;grid-template-columns:420px 1fr;gap:18px;box-shadow:0 10px 30px rgba(0,0,0,0.6)}
+  h1{margin:0;font-size:20px}
+  .staff-visual{width:320px;height:160px;background:linear-gradient(90deg,rgba(125,211,252,0.02),rgba(167,139,250,0.01));border-radius:10px;display:flex;align-items:center;justify-content:center;position:relative;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
+  .big-note{font-weight:700;padding:6px 10px;border-radius:10px;background:linear-gradient(90deg,#0ea5e9,#a78bfa);color:#021225}
+  .controls{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+  label.small{font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+  input[type="range"]{width:100%}
+  select{padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);color:inherit}
+  button{padding:10px 14px;border-radius:10px;border:0;background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#022;cursor:pointer;font-weight:700}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--accent)}
+  .status{display:flex;align-items:center;gap:12px;margin-top:12px}
+  .indicator{width:18px;height:18px;border-radius:50%;background:var(--bad)}
+  .meter{flex:1;background:rgba(255,255,255,0.03);padding:8px;border-radius:12px}
+  .progress{height:14px;border-radius:10px;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+  .panel{background:rgba(255,255,255,0.01);padding:12px;border-radius:10px;margin-top:12px}
+  .note-name{display:inline-block;padding:6px 10px;border-radius:8px;background:linear-gradient(90deg,#0ea5e9,#a78bfa);color:#021225;font-weight:800}
+  #log{max-height:180px;overflow:auto;color:var(--muted);font-size:13px}
+  #targetName{cursor:pointer}
+  svg.staff{width:100%;height:100%}
+</style>
+</head>
+<body>
+  <div class="app" role="application">
+    <div>
+      <h1>Violin Sight-Reading Trainer — Improved</h1>
+      <p style="color:var(--muted);margin:6px 0 12px 0">Uses YIN pitch detection, harmonic correction, and higher resolution to reduce octave/harmonic errors.</p>
+
+      <div style="display:flex;gap:12px">
+        <div class="staff-visual" id="staffVisual"><svg id="staffSvg" class="staff" viewBox="0 0 400 200"></svg></div>
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><div style="font-size:13px;color:var(--muted)">Target</div><div class="note-name" id="targetName">—</div></div>
+            <div><div style="font-size:13px;color:var(--muted)">Detected</div><div style="font-weight:700" id="detectedName">—</div></div>
+          </div>
+
+          <div class="panel">
+            <div style="display:flex;gap:12px;align-items:center">
+              <div style="flex:1"><div style="font-size:12px;color:var(--muted)">Frequency</div><div id="freqDisplay" style="font-weight:700">— Hz</div></div>
+              <div style="width:1px;background:rgba(255,255,255,0.03);height:48px"></div>
+              <div style="flex:0.8"><div style="font-size:12px;color:var(--muted)">Volume</div><div id="volDisplay" style="font-weight:700">— dB</div></div>
+            </div>
+          </div>
+
+          <div style="margin-top:10px" class="controls">
+            <div><label class="small">Range <span id="rangeLabel" style="color:var(--accent)"></span></label><div style="display:flex;gap:8px"><select id="minNote"></select><select id="maxNote"></select></div></div>
+            <div><label class="small">Pitch tolerance (cents) <span id="pitchTolLabel"></span></label><input id="pitchTolerance" type="range" min="3" max="200" value="30" /></div>
+            <div><label class="small">Required volume (dBFS) and margin</label><div style="display:flex;gap:8px"><input id="requiredVolume" type="range" min="-80" max="-10" value="-45"/><input id="volumeMargin" type="range" min="0" max="30" value="10"/></div>
+            <div style="display:flex;gap:12px;color:var(--muted);font-size:13px"><div>Required: <strong id="reqVolLabel">-45 dB</strong></div><div>Margin: <strong id="volMarginLabel">±10 dB</strong></div></div></div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button id="startBtn">Start</button>
+            <button id="stopBtn" class="ghost" disabled>Stop</button>
+            <button id="nextBtn" class="ghost">New Note</button>
+          </div>
+
+          <div class="status">
+            <div class="indicator" id="correctIndicator" title="Green when correct"></div>
+            <div class="meter" aria-hidden="false"><div class="progress" id="progressBar"></div></div>
+          </div>
+
+        </div>
+      </div>
+
+      <div style="margin-top:10px;color:var(--muted);font-size:13px">Tip: if it still favors harmonics, raise pitch tolerance temporarily while you calibrate, or increase required volume.</div>
+    </div>
+
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><strong style="font-size:16px">Status log</strong></div>
+        <div id="holdToPass" style="color:var(--muted)">Hold 5s to pass</div>
+      </div>
+      <div id="log" style="margin-top:8px;background:rgba(255,255,255,0.01);padding:12px;border-radius:8px"></div>
+      <div style="margin-top:12px" id="advanced"></div>
+    </div>
+  </div>
+
+<script>
+/* Improved pitch detection using YIN + harmonic correction
+   - Higher resolution analyser (fftSize 8192)
+   - YIN algorithm with parabolic interpolation
+   - If detected freq is an octave/harmonic, try dividing by 2,3.. to get within the playable range
+   - Strong no-signal/rms guard to prevent "stuck" detections
+*/
+
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const requiredHoldSeconds = 1; //1s to pass
+document.getElementById("holdToPass").textContent = `Hold ${requiredHoldSeconds}s to pass`;
+
+let audioContext, analyserNode, mediaStreamSource;
+let running = false;
+let bufferSize = 4096; // YIN needs larger buffer for accuracy
+let sampleRate = 44100;
+let minNoteEl = document.getElementById("minNote");
+let maxNoteEl = document.getElementById("maxNote");
+let targetNameEl = document.getElementById("targetName");
+let detectedNameEl = document.getElementById("detectedName");
+let freqDisplay = document.getElementById("freqDisplay");
+let volDisplay = document.getElementById("volDisplay");
+let indicator = document.getElementById("correctIndicator");
+let progressBar = document.getElementById("progressBar");
+let logDiv = document.getElementById("log");
+let pitchToleranceEl = document.getElementById("pitchTolerance");
+let pitchTolLabel = document.getElementById("pitchTolLabel");
+let requiredVolumeEl = document.getElementById("requiredVolume");
+let reqVolLabel = document.getElementById("reqVolLabel");
+let volumeMarginEl = document.getElementById("volumeMargin");
+let volMarginLabel = document.getElementById("volMarginLabel");
+let startBtn = document.getElementById("startBtn");
+let stopBtn = document.getElementById("stopBtn");
+let nextBtn = document.getElementById("nextBtn");
+let rangeLabel = document.getElementById("rangeLabel");
+let staffSvg = document.getElementById("staffSvg");
+
+
+var revealTargetNote = true; //set to true to always show target note
+targetNameEl.addEventListener("mousedown", ()=>{
+  if(revealTargetNote){
+    targetNameEl.textContent = "?";
+    revealTargetNote = false;
+  } else {
+    targetNameEl.textContent = nameForMidi(targetMidi);
+    revealTargetNote = true;
+  }
+});
+
+let requiredVol = parseFloat(requiredVolumeEl.value);
+let volMargin = parseFloat(volumeMarginEl.value);
+let pitchTolerance = parseFloat(pitchToleranceEl.value);
+
+requiredVolumeEl.addEventListener("input", ()=>{ requiredVol = parseFloat(requiredVolumeEl.value); reqVolLabel.textContent = requiredVol + " dB"; });
+volumeMarginEl.addEventListener("input", ()=>{ volMargin = parseFloat(volumeMarginEl.value); volMarginLabel.textContent = "±" + volMargin + " dB"; });
+pitchToleranceEl.addEventListener("input", ()=>{ pitchTolerance = parseFloat(pitchToleranceEl.value); pitchTolLabel.textContent = pitchTolerance + "¢"; });
+
+reqVolLabel.textContent = requiredVol + " dB";
+volMarginLabel.textContent = "±" + volMargin + " dB";
+pitchTolLabel.textContent = pitchTolerance + "¢";
+
+// build note list MIDI 48..84
+const midiNotes = [];
+for(let m=48; m<=84; m++){ midiNotes.push({midi:m,label:NOTE_NAMES[m%12] + Math.floor(m/12 - 1)}); }
+function populateRange(){
+  minNoteEl.innerHTML = ""; maxNoteEl.innerHTML = "";
+  midiNotes.forEach(n=>{
+    const o1 = document.createElement("option"); o1.value = n.midi; o1.textContent = n.label; minNoteEl.appendChild(o1);
+    const o2 = document.createElement("option"); o2.value = n.midi; o2.textContent = n.label; maxNoteEl.appendChild(o2);
+  });
+  minNoteEl.value = 55; maxNoteEl.value = 81;
+  updateRangeLabel();
+}
+minNoteEl.addEventListener("change", updateRangeLabel);
+maxNoteEl.addEventListener("change", updateRangeLabel);
+populateRange();
+
+function updateRangeLabel(){
+  let min = parseInt(minNoteEl.value), max = parseInt(maxNoteEl.value);
+  if(min>max){let t=min;min=max;max=t;minNoteEl.value=min;maxNoteEl.value=max;}
+  rangeLabel.textContent = NOTE_NAMES[min%12] + Math.floor(min/12 - 1) + " → " + NOTE_NAMES[max%12] + Math.floor(max/12 - 1);
+}
+
+// choose random target
+let targetMidi = 69;
+function chooseRandomNote(){
+  let min = parseInt(minNoteEl.value), max = parseInt(maxNoteEl.value);
+  if(min>max){let t=min;min=max;max=t;}
+  targetMidi = Math.floor(Math.random()*(max-min+1))+min;
+  updateTarget();
+  writeLog(`New target: ${nameForMidi(targetMidi)} (${midiToFreq(targetMidi).toFixed(2)} Hz)`);
+}
+function updateTarget(){ 
+  if(revealTargetNote) targetNameEl.textContent = nameForMidi(targetMidi); 
+  drawStaffWithNote(targetMidi); 
+}
+
+// midi<->freq
+function midiToFreq(m){ return 440 * Math.pow(2,(m-69)/12); }
+function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
+function nameForMidi(m){ return NOTE_NAMES[m%12] + Math.floor(m/12 - 1); }
+
+// draw staff (simple)
+function drawStaffWithNote(midi) {
+    const svg = staffSvg;
+    svg.innerHTML = "";
+
+    // Staff dimensions
+    const W = 300, H = 250;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const staffTop = 80;
+    const spacing = 14; // distance between staff lines
+    const staffLines = 5;
+
+    // Draw staff lines
+    for (let i = 0; i < staffLines; i++) {
+        const y = staffTop + i * spacing;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", 40);
+        line.setAttribute("x2", W - 40);
+        line.setAttribute("y1", y);
+        line.setAttribute("y2", y);
+        line.setAttribute("stroke", "rgba(255,255,255,0.15)");
+        line.setAttribute("stroke-width", 2);
+        svg.appendChild(line);
+    }
+
+    // Draw treble clef
+    const clef = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    clef.setAttribute("x", 60);
+    clef.setAttribute("y", staffTop + spacing * 4);
+    clef.setAttribute("font-family", "serif");
+    clef.setAttribute("font-size", spacing * 6);
+    clef.setAttribute("fill", "rgba(255,255,255,0.2)");
+    clef.textContent = "𝄞";
+    svg.appendChild(clef);
+
+    // Map natural notes to staff positions (C4 = middle C on ledger line)
+    const notePositions = {
+        "G3": staffTop + spacing * 6.5,
+        "A3": staffTop + spacing * 6,
+        "B3": staffTop + spacing * 5.5,
+        "C4": staffTop + spacing * 5,  // ledger below
+        "D4": staffTop + spacing * 4.5,
+        "E4": staffTop + spacing * 4,
+        "F4": staffTop + spacing * 3.5,
+        "G4": staffTop + spacing * 3,
+        "A4": staffTop + spacing * 2.5,
+        "B4": staffTop + spacing * 2,
+        "C5": staffTop + spacing * 1.5,
+        "D5": staffTop + spacing * 1,
+        "E5": staffTop + spacing * 0.5,
+        "F5": staffTop,
+        "G5": staffTop - spacing * 0.5,
+        "A5": staffTop - spacing,
+        "B5": staffTop - spacing * 1.5,
+        "C6": staffTop - spacing * 2
+    };
+
+    // Convert MIDI to note string
+    const noteName = NOTE_NAMES[midi % 12];
+    const octave = Math.floor(midi / 12 - 1);
+    const fullNote = noteName + octave;
+
+    // Determine natural note (for staff y-position)
+    const naturalNames = ["C","D","E","F","G","A","B"];
+    let naturalNote = noteName[0] + octave; // base note
+    if (!notePositions[naturalNote]) {
+        // fallback to nearest if out of map
+        naturalNote = Object.keys(notePositions).reduce((prev,curr)=> {
+            return Math.abs(midi - midiFromNote(curr)) < Math.abs(midi - midiFromNote(prev)) ? curr : prev;
+        });
+    }
+
+    const y = notePositions[naturalNote];
+
+    // Draw ledger lines if needed
+    const staffBottom = staffTop + spacing * 4;
+    const staffTopLine = staffTop;
+    if (y > staffBottom) {
+        // Below staff
+        let ledgerCount = Math.ceil((y - staffBottom) / (spacing / 2));
+        for (let i = 1; i <= ledgerCount; i++) {
+            const ly = staffBottom + (i - 1) * (spacing);
+            const led = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            led.setAttribute("x1", 160);
+            led.setAttribute("x2", 220);
+            led.setAttribute("y1", ly);
+            led.setAttribute("y2", ly);
+            led.setAttribute("stroke", "rgba(255,255,255,0.15)");
+            led.setAttribute("stroke-width", 2);
+            svg.appendChild(led);
+        }
+    } else if (y < staffTopLine) {
+        // Above staff
+        let ledgerCount = Math.ceil((staffTopLine - y) / (spacing / 2));
+        for (let i = 1; i <= ledgerCount; i++) {
+            const ly = staffTopLine - (i - 1) * (spacing);
+            const led = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            led.setAttribute("x1", 160);
+            led.setAttribute("x2", 220);
+            led.setAttribute("y1", ly);
+            led.setAttribute("y2", ly);
+            led.setAttribute("stroke", "rgba(255,255,255,0.15)");
+            led.setAttribute("stroke-width", 2);
+            svg.appendChild(led);
+        }
+    }
+
+    // Draw note head
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("transform", "translate(190,0)");
+    const e = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+    e.setAttribute("cx", 0);
+    e.setAttribute("cy", y);
+    e.setAttribute("rx", 10);
+    e.setAttribute("ry", 7);
+    e.setAttribute("fill", "#fff");
+    e.setAttribute("transform", `rotate(-15 0 ${y})`);
+    g.appendChild(e);
+
+    // Draw accidental if needed
+    const accidentalFontSize = 25
+    if (noteName.includes("#")) {
+        const acc = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        acc.setAttribute("x", -10-accidentalFontSize);
+        acc.setAttribute("y", y + 4);
+        acc.setAttribute("font-size", accidentalFontSize);
+        acc.setAttribute("fill", "#fff");
+        acc.textContent = "♯";
+        g.appendChild(acc);
+    } else if (noteName.includes("b")) {
+        const acc = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        acc.setAttribute("x", -10-accidentalFontSize);
+        acc.setAttribute("y", y + 4);
+        acc.setAttribute("font-size", accidentalFontSize);
+        acc.setAttribute("fill", "#fff");
+        acc.textContent = "♭";
+        g.appendChild(acc);
+    }
+
+    // Note label
+    /*
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", 40);
+    label.setAttribute("y", y + 5);
+    label.setAttribute("font-size", 14);
+    label.setAttribute("fill", "rgba(255,255,255,0.75)");
+    label.textContent = fullNote;
+    g.appendChild(label);*/
+
+    svg.appendChild(g);
+
+    // helper function to convert note string to MIDI
+    function midiFromNote(str) {
+        const n = str.slice(0,-1);
+        const o = parseInt(str.slice(-1));
+        const idx = NOTE_NAMES.indexOf(n);
+        return 12*(o+1) + idx;
+    }
+}
+
+
+// logging helper
+function writeLog(text, color="var(--muted)"){ const now=new Date().toLocaleTimeString(); logDiv.innerHTML = `<div style="margin-bottom:6px"><strong style="color:${color}">${now}</strong> — ${text}</div>` + logDiv.innerHTML; }
+
+// Start/Stop audio
+async function startAudio(){
+  if(running) return;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1},video:false});
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    sampleRate = audioContext.sampleRate;
+    analyserNode = audioContext.createAnalyser();
+    // use a large fftSize for better time-domain buffer size
+    analyserNode.fftSize = 8192; // large so time-domain buffer is long
+    analyserNode.smoothingTimeConstant = 0.05;
+    mediaStreamSource = audioContext.createMediaStreamSource(stream);
+    mediaStreamSource.connect(analyserNode);
+    running = true;
+    startBtn.disabled = true; stopBtn.disabled = false;
+    writeLog("Microphone connected. Sample rate: " + sampleRate + " Hz");
+    loop();
+  } catch(err){
+    writeLog("Microphone error: " + err.message, "var(--bad)");
+    console.error(err);
+  }
+}
+function stopAudio(){
+  if(!running) return;
+  running = false;
+  if(audioContext && audioContext.state !== "closed") audioContext.close();
+  startBtn.disabled = false; stopBtn.disabled = true;
+  writeLog("Stopped.");
+  indicator.style.background = "var(--bad)"; progressBar.style.width = "0%";
+}
+
+// YIN implementation (moderate-size buffer, standard threshold)
+function yinDetect(buffer, sampleRate){
+  // buffer: Float32Array
+  const tauMax = Math.floor(buffer.length / 2);
+  const yinBuffer = new Float32Array(tauMax);
+  let runningSum = 0;
+  // difference function d(tau)
+  for(let tau=0;tau<tauMax;tau++){
+    let sum = 0;
+    for(let i=0;i<tauMax;i++){
+      const delta = buffer[i] - buffer[i+tau];
+      sum += delta*delta;
+    }
+    yinBuffer[tau] = sum;
+  }
+  // cumulative mean normalized difference function
+  yinBuffer[0] = 1;
+  let cumulative = 0;
+  for(let tau=1;tau<tauMax;tau++){
+    cumulative += yinBuffer[tau];
+    yinBuffer[tau] = yinBuffer[tau] * tau / cumulative;
+  }
+  // absolute threshold
+  const threshold = 0.15;
+  let tauEstimate = -1;
+  for(let tau=1;tau<tauMax;tau++){
+    if(yinBuffer[tau] < threshold){
+      // find local minimum
+      while(tau+1 < tauMax && yinBuffer[tau+1] < yinBuffer[tau]) tau++;
+      tauEstimate = tau;
+      break;
+    }
+  }
+  if(tauEstimate === -1) return {freq:-1,period:-1,probability:0};
+  // parabolic interpolation around tauEstimate
+  const betterTau = parabolicInterpolation(yinBuffer, tauEstimate);
+  const freq = sampleRate / betterTau;
+  const probability = 1 - yinBuffer[tauEstimate];
+  return {freq,period:betterTau,probability};
+}
+function parabolicInterpolation(buf, tau){
+  // gets refined tau using neighbors (assume tau in [1..N-2])
+  if(tau<=0 || tau>=buf.length-1) return tau;
+  const s0 = buf[tau-1], s1 = buf[tau], s2 = buf[tau+1];
+  const denom = (s0 + s2 - 2*s1);
+  if(denom === 0) return tau;
+  const shift = (s0 - s2) / (2*denom);
+  return tau + shift;
+}
+
+// harmonic correction: if detected freq is a harmonic (2x,3x...) choose fundamental that falls within playable range
+function correctHarmonic(freq){
+  if(!(freq>0)) return freq;
+  let minMidi = parseInt(minNoteEl.value), maxMidi = parseInt(maxNoteEl.value);
+  if(minMidi>maxMidi){ let t=minMidi; minMidi=maxMidi; maxMidi=t; }
+  const minF = midiToFreq(minMidi), maxF = midiToFreq(maxMidi);
+  // try dividing by small integers until in range
+  for(let div=1; div<=6; div++){
+    const candidate = freq / div;
+    if(candidate >= minF*0.9 && candidate <= maxF*1.1){
+      // prefer the candidate closest to a MIDI pitch (less cents error)
+      return candidate;
+    }
+  }
+  // also try multiplying (in case detector picked subharmonic)
+  for(let mul=2; mul<=4; mul++){
+    const candidate = freq * mul;
+    if(candidate >= minF*0.9 && candidate <= maxF*1.1) return candidate;
+  }
+  return freq;
+}
+
+// main loop & correctness logic
+let floatBuf = null;
+let accumulated = 0;
+let lastTime = performance.now();
+let lastDetectedFreq = -1;
+let smoothingFreq = null;
+
+function loop(){
+  if(!running) return;
+  requestAnimationFrame(loop);
+  const analyser = analyserNode;
+  const timeDomain = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(timeDomain);
+  // compute rms quickly
+  let rms = 0;
+  for(let i=0;i<timeDomain.length;i++){ rms += timeDomain[i]*timeDomain[i]; }
+  rms = Math.sqrt(rms / timeDomain.length);
+  const dB = (rms > 0) ? (20*Math.log10(rms)) : -Infinity;
+  volDisplay.textContent = isFinite(dB) ? dB.toFixed(1) + " dB" : "-∞ dB";
+
+  // quick no-signal guard (very low rms -> don't detect)
+  if(rms < 0.0015){
+    freqDisplay.textContent = "— Hz";
+    detectedNameEl.textContent = "—";
+    indicator.style.background = "var(--bad)";
+    accumulated = 0;
+    progressBar.style.width = "0%";
+    return;
+  }
+
+  // run YIN on timeDomain (it expects a reasonably long buffer)
+  const yinRes = yinDetect(timeDomain, audioContext.sampleRate);
+  let freq = yinRes.freq;
+  // if YIN low-probability, try fallback: compute autocorrelation peak (fast fallback)
+  if(freq <= 0 || yinRes.probability < 0.2){
+    // fallback: simple autocorrelation peak (still better than nothing)
+    freq = fallbackAutoCorr(timeDomain, audioContext.sampleRate);
+  }
+  if(freq <= 0 || !isFinite(freq)){
+    freqDisplay.textContent = "— Hz";
+    detectedNameEl.textContent = "—";
+    indicator.style.background = "var(--bad)";
+    accumulated = 0;
+    progressBar.style.width = "0%";
+    return;
+  }
+
+  // harmonic correction heuristic
+  const corrected = correctHarmonic(freq);
+  // smoothing to avoid jumping (small alpha)
+  const alpha = 0.15;
+  if(smoothingFreq == null) smoothingFreq = corrected;
+  smoothingFreq = smoothingFreq*(1-alpha) + corrected*alpha;
+
+  freqDisplay.textContent = smoothingFreq.toFixed(1) + " Hz";
+
+  // map to nearest midi
+  const midiFloat = freqToMidi(smoothingFreq);
+  const midiRound = Math.round(midiFloat);
+  detectedNameEl.textContent = `${NOTE_NAMES[midiRound%12]}${Math.floor(midiRound/12 - 1)}`;
+
+  // check correctness: pitch within cents tolerance and volume ok
+  const cents = 1200*Math.log2(smoothingFreq / midiToFreq(targetMidi));
+  const pitchOk = Math.abs(cents) <= pitchTolerance;
+  const volOk = dB >= (requiredVol - volMargin);
+  indicator.style.background = (pitchOk && volOk) ? "var(--good)" : "var(--bad)";
+
+  // progress logic (frame-dt)
+  const now = performance.now();
+  const dt = (now - lastTime) / 1000; lastTime = now;
+  if(pitchOk && volOk){
+    accumulated += dt;
+    const pct = Math.min(100, (accumulated / requiredHoldSeconds) * 100);
+    progressBar.style.width = pct + "%";
+  } else {
+    if(accumulated > 0) writeLog(`Broken at ${accumulated.toFixed(2)}s (pitch ok? ${pitchOk}, vol ok? ${volOk})`);
+    accumulated = 0;
+    progressBar.style.width = "0%";
+  }
+
+  if(accumulated >= requiredHoldSeconds){
+    writeLog(`✔ Held ${nameForMidi(targetMidi)} for ${requiredHoldSeconds} s`,"var(--good)");
+    playSuccess();
+    accumulated = 0;
+    progressBar.style.width = "0%";
+    chooseRandomNote();
+  }
+}
+
+// small fallback autocorrelation (fast)
+function fallbackAutoCorr(buf, sr){
+  const n = buf.length;
+  let bestOffset = -1; let bestCorr = 0;
+  for(let offset=20; offset< n/2; offset++){
+    let corr = 0;
+    for(let i=0;i<n/2;i++) corr += Math.abs(buf[i] - buf[i+offset]);
+    corr = 1 - corr/(n/2);
+    if(corr > bestCorr){ bestCorr = corr; bestOffset = offset; }
+  }
+  if(bestOffset > 0) return sr / bestOffset;
+  return -1;
+}
+
+function playSuccess(){
+  if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const ctx = audioContext;
+  const o = ctx.createOscillator(); const g = ctx.createGain();
+  o.type = "sine"; o.frequency.value = 880; g.gain.value = 0;
+  o.connect(g); g.connect(ctx.destination);
+  const now = ctx.currentTime;
+  g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(0.18, now+0.01);
+  o.frequency.setValueAtTime(880, now); o.frequency.exponentialRampToValueAtTime(1320, now+0.18);
+  g.gain.exponentialRampToValueAtTime(0.0001, now+0.28);
+  o.start(now); o.stop(now+0.32);
+}
+
+// UI wiring
+startBtn.addEventListener("click", async ()=>{ await startAudio(); chooseRandomNote(); });
+stopBtn.addEventListener("click", ()=> stopAudio());
+nextBtn.addEventListener("click", ()=> chooseRandomNote());
+chooseRandomNote();
+drawStaffWithNote(targetMidi);
+writeLog("Ready. Press Start and allow mic. If detection favors a harmonic, increase the required volume and/or temporarily widen pitch tolerance.");
+
+// accessibility
+window.addEventListener("keydown", (e)=>{ if(e.key===" "){ e.preventDefault(); if(!running) startBtn.click(); else stopBtn.click(); } if(e.key==="n") nextBtn.click(); });
+
+</script>
+</body>
+</html>
